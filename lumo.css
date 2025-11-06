@@ -1,23 +1,81 @@
+/* Lumo Framework Core Styles */
+
+/* Theme variables */
 :root {
+  /* Base theme colors */
   --bg-color: #ffffff;
   --text-color: #000000;
+  --primary: #155799;
+  --secondary: #159957;
+
+  /* Theme-specific colors */
+  --bg-light: #d9d9d9;
+  --bg-dark: #1e1e21;
+  --card-bg: rgba(255, 255, 255, 0.9);
+  --card-bg-dark: rgba(43, 43, 45, 0.9);
+  --body-bg: #f8f9fa;
+  --body-bg-dark: #121212;
+  --text-contrast: rgb(18, 18, 18);
 }
 
+/* Base theme application */
 body {
   margin: 0;
   background: var(--bg-color);
   color: var(--text-color);
   font-family: "Inter", sans-serif;
-  overflow: hidden;
+  overflow: auto;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
+body[data-theme="dark"] {
+  --bg-color: var(--bg-dark);
+  --text-color: #f0f0f0;
+  --card-bg: var(--card-bg-dark);
+  --body-bg: var(--body-bg-dark);
+}
+
+body.dark-mode {
+  --main-text: #f0f0f0;
+  --bg-color: var(--bg-dark);
+  --text-color: #f0f0f0;
+  --card-bg: var(--card-bg-dark);
+  --body-bg: var(--body-bg-dark);
+  --text-contrast: #f0f0f0;
+}
+
+h1 {
+    color: var(--main-text);
+}
+
+h2 {
+    color: var(--text-contrast);
+}
+
+
+/* Core layout */
 .app {
   position: relative;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  margin: 2% 10% 2% 10%;
+  transition: margin 0.3s ease, padding-right 0.3s ease;
 }
 
+.app.is-phone {
+  margin: 2%;
+  padding-right: 96px;  /* space for theme toggle */
+}
+
+@media (max-width: 420px) {
+  .app.is-phone {
+    padding-right: 84px;
+  }
+}
+
+/* Background */
 .lumo-bg {
   position: fixed;
   inset: 0;
@@ -31,25 +89,49 @@ body {
   display: block;
 }
 
-.lumo-theme-switch {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  cursor: pointer;
-  font-size: 1.5rem;
+/* Theme switcher */
+.theme-toggle {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    color: white;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    transition: all 0.3s ease;
 }
 
+.theme-toggle:hover {
+    transform: scale(1.1);
+    }
+
+
+/* Main content area */
 .lumo-main {
   z-index: 1;
   padding: 2rem;
+  flex: 1;
 }
 
 .btn a {
   text-decoration: none;
-  color: var(--text-color);
-  padding: 0.5em 1em;
-  border: 1px solid var(--text-color);
-  border-radius: 5px;
-  margin: 0.5em;
-  display: inline-block;
+  transition: all 0.3s ease;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
 }
+
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+}
+

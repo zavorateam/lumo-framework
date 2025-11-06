@@ -18,7 +18,7 @@ export class LumoTheme {
 
   applyTheme(theme) {
     document.body.dataset.theme = theme;
-    document.documentElement.style.setProperty('--bg-color', theme === 'light' ? '#ffffff' : '#111111');
-    document.documentElement.style.setProperty('--text-color', theme === 'light' ? '#111111' : '#f0f0f0');
+    document.documentElement.style.setProperty('--bg-color', theme === 'light' ? '#ffffff' : 'rgba(18, 18, 18, 1)');
+    document.documentElement.style.setProperty('--text-color', theme === 'light' ? 'rgba(18, 18, 18, 1)' : '#f0f0f0');
   }
 }

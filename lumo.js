@@ -22,7 +22,7 @@ class LumoCore {
 
     // переключатель темы
     this.themeSwitch = document.createElement('div');
-    this.themeSwitch.className = 'lumo-theme-switch';
+    this.themeSwitch.className = 'theme-toggle';
     this.themeSwitch.textContent = '🌓';
     this.app.appendChild(this.themeSwitch);
 
@@ -38,6 +38,7 @@ class LumoCore {
   }
 
   initBackground() {
+    console.log('Lumo bgType:', this.bgType); // ← вот это
     this.bg = new LumoBackground(this.bgType);
     this.bg.mount(this.bgContainer);
   }
