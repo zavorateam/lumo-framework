@@ -1,5 +1,3 @@
-// bg/blob.js
-// Регистрация: window.LumoBackgrounds['blob'] = BlobBG
 (function () {
   window.LumoBackgrounds = window.LumoBackgrounds || {};
 

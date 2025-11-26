@@ -16,6 +16,11 @@
   let currentBgInstances = []; // {name, instance, wrapper}
   let currentComponents = []; // {name, instance, el}
 
+  const lumoScript = document.querySelector('script[src*="lumo.js"]');
+  const LumoBaseUrl = lumoScript 
+    ? lumoScript.src.replace(/lumo\.js(\?.*)?$/, '') 
+    : (window.LUMO_BASE_URL || './'); // Запасной вариант: текущий каталог
+
   // single global click handler reference so we can remove/replace reliably
   let globalZtmfClickHandler = null;
 
@@ -248,7 +253,7 @@
     return new Promise((resolve) => {
       if (!name) return resolve();
       if (window.LumoBackgrounds && window.LumoBackgrounds[name]) return resolve();
-      const scriptUrl = absoluteURL(`https://zavorateam.github.io/lumo-framework/bg/${name}.js`);
+      const scriptUrl = absoluteURL(baseUrl, `./bg/${name}.js`);
       if (document.querySelector(`script[data-lumo-bg="${name}"]`)) {
         const poll = setInterval(() => { if (window.LumoBackgrounds && window.LumoBackgrounds[name]) { clearInterval(poll); resolve(); } }, 80);
         setTimeout(() => { clearInterval(poll); resolve(); }, 5000);

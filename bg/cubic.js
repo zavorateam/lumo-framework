@@ -1,4 +1,3 @@
-// bg/cubic.js — теперь: реагирует только на мышь; подсветка только одного куба; цвета зависят от темы
 (function () {
   window.LumoBackgrounds = window.LumoBackgrounds || {};
 

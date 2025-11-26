@@ -1,8 +1,3 @@
-// bg/cnprtcl.js
-// Lightweight native Canvas implementation.
-// No external dependencies. Adapts background to Lumo theme.
-// Particles are either Green or Contrast Theme Color.
-// Registers window.LumoBackgrounds['cnprtcl'] = CnprtclBG
 (function () {
   window.LumoBackgrounds = window.LumoBackgrounds || {};
 
