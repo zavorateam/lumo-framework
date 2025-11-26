@@ -1,13 +1,25 @@
+/* lumo.js — full file
+   Lumo framework loader + parsers (cont, blocky), theme, bg, back button, ztmf interception.
+   Replace your existing lumo.js with this file.
+*/
 (function () {
   'use strict';
 
+  // Public registry for background classes (bg/*.js should register into this)
   window.LumoBackgrounds = window.LumoBackgrounds || {};
 
+  // DOM anchors
   const app = document.getElementById('app');
   const statusEl = document.getElementById('lumo-status');
+
+  // runtime registries
   let currentBgInstances = []; // {name, instance, wrapper}
   let currentComponents = []; // {name, instance, el}
 
+  // single global click handler reference so we can remove/replace reliably
+  let globalZtmfClickHandler = null;
+
+  // ---- utilities ----
   function status(msg, show = true, timeout = 2200) {
     if (!statusEl) return;
     if (!show) { statusEl.style.display = 'none'; return; }
@@ -23,6 +35,15 @@
     } catch (e) { return path; }
   }
 
+  function baseFromUrl(url) {
+    try {
+      const u = new URL(url, location.href);
+      u.pathname = u.pathname.replace(/\/[^/]*$/, '/');
+      return u.toString();
+    } catch (e) { return './'; }
+  }
+
+  // ---- ZTMF parsing helpers ----
   function splitZtmf(text) {
     const metaMatch = text.match(/<meta>([\s\S]*?)<\/meta>/i);
     const bodyMatch = text.match(/<body>([\s\S]*?)<\/body>/i);
@@ -49,30 +70,24 @@
     return content.trim();
   }
 
-  // --- NEW: enhanced cont parser (header separated from links) ---
-  // возвращает упорядоченный список токенов изнутри cont{ ... }
+  // ---- cont parser (existing, improved) ----
   function parseContInnerOrdered(inner) {
     const tokens = [];
     let i = 0;
     while (i < inner.length) {
-      // пропускаем пробельные символы
       if (/\s/.test(inner[i])) { i++; continue; }
 
-      // <br>
       if (inner.slice(i, i + 4).toLowerCase() === '<br>') {
         tokens.push({ type: 'br' });
         i += 4;
         continue;
       }
 
-      // блок вида name[ ... ]
       const blockMatch = inner.slice(i).match(/^([a-zA-Z0-9_-]+)\s*\[/);
       if (blockMatch) {
         const name = blockMatch[1];
         let depth = 0;
-        let j = i + blockMatch[0].length; // позиция после '['
-
-        // ищем соответствующую ']' с учётом вложенностей
+        let j = i + blockMatch[0].length;
         while (j < inner.length) {
           if (inner[j] === '[') depth++;
           else if (inner[j] === ']') {
@@ -81,21 +96,18 @@
           }
           j++;
         }
-
         const content = inner.slice(i + blockMatch[0].length, j).trim();
         tokens.push({ type: 'block', name, html: content });
         i = j + 1;
-        if (inner[i] === ',') i++; // пропустить запятую-разделитель
+        if (inner[i] === ',') i++;
         continue;
       }
 
-      // иначе — "сырая" html-строка до следующей запятой на том же уровне
-      // проще: ищем ближайшую запятую, но не внутри скобок (наш кейс обычно простой)
+      // raw until next comma (best-effort)
       let nextCommaIdx = -1;
       for (let k = i; k < inner.length; k++) {
         if (inner[k] === ',') { nextCommaIdx = k; break; }
         if (inner[k] === '[') {
-          // если встретили '[', пропустим до закрытия (защита)
           let depth = 0, kk = k + 1;
           while (kk < inner.length) {
             if (inner[kk] === '[') depth++;
@@ -118,9 +130,6 @@
     return tokens;
   }
 
-
-  // processBody: теперь создаёт header и grid-блоки **в порядке токенов**,
-  // каждый header -> отдельный .cont-header-*, каждый grid/column -> отдельный .cont-links cont-grid/column
   function processBody(bodyRaw) {
     let componentsSpec = null;
     const compMatch = bodyRaw.match(/components\s*=\s*([\s\S]*)$/i);
@@ -144,7 +153,6 @@
         }
 
         if (t.type === 'raw') {
-          // сырой HTML — вставляем как есть (например <h6> или простые span'ы)
           htmlFinal += t.html || '';
           continue;
         }
@@ -153,28 +161,24 @@
           const n = (t.name || '').toLowerCase();
 
           if (n === 'center' || n === 'left' || n === 'right') {
-            // отдельный header-контейнер для каждого блока
             htmlFinal += `<div class="cont-header-${n}">${t.html || ''}</div><br>`;
             continue;
           }
 
           if (n === 'grid' || n === 'column') {
-            // отдельный блок ссылок для каждого encountered grid/column
             const cls = n === 'grid' ? 'cont-links cont-grid' : 'cont-links cont-column';
             htmlFinal += `<div class="${cls}">${t.html || ''}</div>`;
             continue;
           }
 
-          // неизвестный блок — оборачиваем в div с именем блока
           htmlFinal += `<div class="${t.name}">${t.html || ''}</div>`;
         }
       }
 
-      htmlFinal += '</div>'; // закрываем .cont
+      htmlFinal += '</div>';
       bodyRaw = bodyRaw.replace(contRe, htmlFinal);
     }
 
-    // Generic fallback for other blocks
     const blockRe = /([a-zA-Z0-9_-]+)\s*\{\s*([\s\S]*?)\s*\}/g;
     let html = bodyRaw.replace(blockRe, (full, name, inner) => `<div class="${name}">${inner ? inner.trim() : ''}</div>`);
 
@@ -182,6 +186,40 @@
     return { html, componentsSpec };
   }
 
+  // ---- blocky parser (new) ----
+  // lightweight parser that converts the blocky syntax into nested divs
+  function parseBlocky(bodyRaw) {
+    let componentsSpec = null;
+    const compMatch = bodyRaw.match(/components\s*=\s*([\s\S]*)$/i);
+    if (compMatch) { componentsSpec = compMatch[1].trim(); bodyRaw = bodyRaw.slice(0, compMatch.index).trim(); }
+
+    // normalize some common comma issues
+    let src = bodyRaw.replace(/,\s*\]/g, ']').replace(/\[\s*,/g, '[');
+
+    const reCurly = /([a-zA-Z0-9_-]+)\s*\{\s*([\s\S]*?)\s*\}/;
+    const reSquare = /([a-zA-Z0-9_-]+)\s*\[\s*([\s\S]*?)\s*\]/;
+
+    let iter = 0;
+    // iterate replacing innermost blocks; this is simple but fits the given structure
+    while ((reCurly.test(src) || reSquare.test(src)) && iter < 400) {
+      iter++;
+      src = src.replace(reCurly, (full, name, inner) => {
+        const cleaned = inner.replace(/^\s*,\s*/, '').replace(/\s*,\s*$/, '');
+        return `<div class="${name}">${cleaned}</div>`;
+      });
+      src = src.replace(reSquare, (full, name, inner) => {
+        const cleaned = inner.replace(/^\s*,\s*/, '').replace(/\s*,\s*$/, '');
+        return `<div class="${name}">${cleaned}</div>`;
+      });
+    }
+
+    src = src.replace(/,\s*(?=<div)/g, '');
+
+    const html = `<div class="app"><div class="container">${src}</div></div>`;
+    return { html, componentsSpec };
+  }
+
+  // ---- styles loader / inline style injector ----
   function injectInlineStyle(cssText, id = 'lumo-inline-style') {
     if (!cssText) return;
     let s = document.getElementById(id);
@@ -205,6 +243,7 @@
     else { link = document.createElement('link'); link.rel = 'icon'; link.href = abs; document.head.appendChild(link); }
   }
 
+  // ---- bg loader (script injection) ----
   function loadBgScriptIfNeeded(name, baseUrl) {
     return new Promise((resolve) => {
       if (!name) return resolve();
@@ -226,8 +265,7 @@
     });
   }
 
-  // --- Theme component (rewritten & improved) ---
-  // Обновлённый LumoTheme — показывает один символ (☀️ / 🌙) и обновляет его динамически
+  // ---- Theme component ----
   class LumoTheme {
     constructor(position = 'bottom-right') {
       this.position = position || 'bottom-right';
@@ -237,39 +275,28 @@
       this._onClick = this.toggle.bind(this);
     }
 
-    // утилита иконки по теме
-    _iconFor(theme) {
-      return theme === 'dark' ? '🌙' : '☀️';
-    }
-
-    // утилита подписи
-    _titleFor(theme) {
-      return theme === 'dark' ? 'Тёмная тема' : 'Светлая тема';
-    }
+    _iconFor(theme) { return theme === 'dark' ? '🌙' : '☀'; }
+    _titleFor(theme) { return theme === 'dark' ? 'Тёмная тема' : 'Светлая тема'; }
 
     mount() {
       const btn = document.createElement('button');
       btn.className = 'lumo-theme-switch';
       btn.setAttribute('aria-label', 'Toggle theme');
-      // теперь только один символ, без лишних span'ов
       btn.textContent = this._iconFor(this.current);
       btn.title = this._titleFor(this.current);
 
-      // position class (существующие классы .lumo-theme-pos-*)
       const posClass = `lumo-theme-pos-${this.position.replace(/\s+/g,'-').toLowerCase()}`;
       btn.classList.add(posClass);
 
       document.body.appendChild(btn);
       this.switchEl = btn;
       this.applyTheme(this.current);
-
       btn.addEventListener('click', this._onClick);
     }
 
     toggle() {
       this.current = this.current === 'light' ? 'dark' : 'light';
       this.applyTheme(this.current);
-      // обновляем визуально кнопку
       if (this.switchEl) {
         this.switchEl.textContent = this._iconFor(this.current);
         this.switchEl.title = this._titleFor(this.current);
@@ -279,6 +306,7 @@
 
     applyTheme(theme) {
       document.body.dataset.theme = theme;
+      document.body.classList.toggle('dark-mode', theme === 'dark');
       if (theme === 'light') {
         document.documentElement.style.setProperty('--bg-color', '#ffffff');
         document.documentElement.style.setProperty('--text-color', 'rgba(18,18,18,1)');
@@ -289,9 +317,6 @@
         document.documentElement.style.setProperty('--header-color', 'rgba(230, 230, 230, 1)');
       }
       document.documentElement.classList.toggle('lumo-dark', theme === 'dark');
-
-      // Если фон (например cubic) использует CSS-переменные, можем задать их здесь (опционально)
-      // document.documentElement.style.setProperty('--cubic-top', theme === 'dark' ? '#787880' : '#dcdbe6');
     }
 
     destroy() {
@@ -304,7 +329,7 @@
     }
   }
 
-  // destroy backgrounds
+  // ---- lifecycle cleanup ----
   async function destroyAllBackgroundInstances() {
     for (const it of currentBgInstances) {
       try { if (it.instance && typeof it.instance.destroy === 'function') await it.instance.destroy(); } catch (e) { console.warn(e); }
@@ -320,6 +345,7 @@
     currentComponents = [];
   }
 
+  // ---- components spec parser ----
   function parseComponentsSpec(spec) {
     if (!spec) return [];
     const parts = [];
@@ -340,12 +366,12 @@
     }).filter(Boolean);
   }
 
+  // ---- render parsed ztmf content and initialize components ----
   async function renderParsed({ meta, inlineStyle, html, componentsSpec }, baseUrl) {
     // meta.type handling
     if (meta.type) {
       const t = String(meta.type).toLowerCase();
       if (t === 'html') {
-        // redirect if URL provided
         const redirect = meta.href || meta.url || meta.link;
         if (redirect) {
           const dest = absoluteURL(baseUrl, redirect);
@@ -355,7 +381,7 @@
           console.warn('Lumo: meta.type=html but no href/url/link provided');
         }
       }
-      // other: 'main' -> proceed; 'other' -> load but skip bg init (handled later)
+      // 'main' and 'blocky' handled by parsing earlier
     }
 
     if (meta.title) document.title = meta.title;
@@ -368,20 +394,22 @@
       if (shouldDisable) installDisableContextMenu();
     }
 
+    // render html into app
+    if (!app) {
+      console.warn('Lumo: #app container not found, abort renderParsed');
+      return;
+    }
     app.innerHTML = html;
 
-    // components
-    // components
+    // parse components and initialize them
     const components = parseComponentsSpec(componentsSpec || '');
-    // destroy previous instances
     await destroyAllBackgroundInstances();
 
     for (const comp of components) {
       if (!comp) continue;
 
-      // --- BACK button component ---
+      // BACK button component
       if (comp.name === 'back') {
-        // comp.inner format: "position, target"  e.g. "bottom-right, index.ztmf"
         const raw = (comp.inner || '').trim();
         const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
         const pos = parts[0] || 'bottom-right';
@@ -390,40 +418,46 @@
         const btn = document.createElement('button');
         btn.className = 'lumo-back-button';
         btn.setAttribute('aria-label', 'Back');
-        btn.textContent = '⮜'; // стрелка назад (можно заменить)
+        btn.textContent = '⟵';
         btn.title = 'Назад';
 
-        // position class reuse of theme position classes
         const posClass = `lumo-theme-pos-${pos.replace(/\s+/g, '-').toLowerCase()}`;
         btn.classList.add(posClass);
 
-        // If theme button is in the same position, shift this button left (so it appears to the left of theme)
-        // approximate offset: theme width(46) + margin(12) + spacing(12) => 70px
+        // shift left if placed on right (approx)
         const offsetPx = 70;
         const p = pos.toLowerCase();
         if (p.endsWith('-right') || p === 'right') {
-          // move left from the right edge
-          btn.style.right = (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lumo-back-right-offset') || offsetPx) + 'px');
+          btn.style.right = offsetPx + 'px';
         } else if (p.endsWith('-left') || p === 'left') {
-          btn.style.right = (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lumo-back-left-offset') || offsetPx) + 'px');
-        } else if (p === 'top' || p === 'bottom' || p === 'center') {
-          // for center/top/bottom place a bit left
-          // compute left as calc(50% - offset)
+          btn.style.left = offsetPx + 'px';
+        } else if (p === 'center' || p === 'top' || p === 'bottom') {
           btn.style.left = 'calc(50% - 70px)';
+        } else {
+          btn.style.right = offsetPx + 'px';
         }
 
-        // click handler uses referrer/history fallback to explicit target
         const onClickBack = (ev) => {
           ev.preventDefault();
-          // if there is a meaningful referrer (and not the same page) try history.back()
-          // fallback: go to explicit target
+          try {
+            const ref = document.referrer || '';
+            if (ref && ref !== location.href) {
+              history.back();
+              setTimeout(() => {
+                // if didn't navigate, fallback
+                if (location.href === ref || location.pathname.endsWith('/')) {
+                  window.location.href = absoluteURL(baseUrl, target);
+                }
+              }, 300);
+              return;
+            }
+          } catch (e) {}
           window.location.href = absoluteURL(baseUrl, target);
         };
 
         btn.addEventListener('click', onClickBack);
         document.body.appendChild(btn);
 
-        // add to currentComponents so destroyAllBackgroundInstances will remove it
         currentComponents.push({
           name: 'back',
           instance: {
@@ -438,11 +472,10 @@
         continue;
       }
 
-      // --- THEME component (existing) ---
+      // THEME component
       if (comp.name === 'theme') {
-        // comp.inner can be a position string like bottom-right
         const pos = (comp.inner || 'bottom-right').trim();
-        const el = document.createElement('div'); // placeholder wrapper (easier for destroy)
+        const el = document.createElement('div');
         document.body.appendChild(el);
         const themeInstance = new LumoTheme(pos);
         themeInstance.mount();
@@ -450,38 +483,61 @@
         continue;
       }
 
-      // --- BG component (existing) ---
+      // BG component (HTML inner OR key:value specification)
       if (comp.name === 'bg' && comp.inner) {
-        // create wrapper for bg nodes
-        const wrapper = document.createElement('div');
-        wrapper.className = 'lumo-bg-wrapper';
-        wrapper.style.position = 'fixed';
-        wrapper.style.inset = '0';
-        wrapper.style.zIndex = '-1';
-        wrapper.style.pointerEvents = 'none';
-        wrapper.innerHTML = comp.inner;
-        document.body.appendChild(wrapper);
+        const inner = comp.inner.trim();
 
-        const canvases = wrapper.querySelectorAll('canvas[bg]');
-        for (const c of canvases) {
-          const bgName = c.getAttribute('bg');
-          if (!c.width) c.width = window.innerWidth;
-          if (!c.height) c.height = window.innerHeight;
-          await loadBgScriptIfNeeded(bgName, baseUrl);
-          const BgClass = window.LumoBackgrounds && window.LumoBackgrounds[bgName];
-          if (typeof BgClass === 'function') {
-            try {
-              const instance = new BgClass(c, { baseUrl, meta });
-              currentBgInstances.push({ name: bgName, instance, wrapper });
-            } catch (err) { console.error('Lumo: bg init error', bgName, err); }
-          } else {
-            console.warn('Lumo: bg not found after load', bgName);
+        if (inner.startsWith('<') || /<canvas\b/i.test(inner) || /<div\b/i.test(inner)) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'lumo-bg-wrapper';
+          wrapper.style.position = 'fixed';
+          wrapper.style.inset = '0';
+          wrapper.style.zIndex = '-1';
+          wrapper.style.pointerEvents = 'none';
+          wrapper.innerHTML = inner;
+          document.body.appendChild(wrapper);
+
+          const canvases = wrapper.querySelectorAll('canvas[bg]');
+          for (const c of canvases) {
+            const bgName = c.getAttribute('bg');
+            if (!c.width) c.width = window.innerWidth;
+            if (!c.height) c.height = window.innerHeight;
+            await loadBgScriptIfNeeded(bgName, baseUrl);
+            const BgClass = window.LumoBackgrounds && window.LumoBackgrounds[bgName];
+            if (typeof BgClass === 'function') {
+              try {
+                const instance = new BgClass(c, { baseUrl, meta });
+                currentBgInstances.push({ name: bgName, instance, wrapper });
+              } catch (err) { console.error('Lumo: bg init error', bgName, err); }
+            } else {
+              console.warn('Lumo: bg not found after load', bgName);
+            }
           }
+        } else {
+          // parse simple key:value lists or lone values
+          const parts = inner.split(',').map(s => s.trim()).filter(Boolean);
+          for (const p of parts) {
+            let m = p.match(/^([a-zA-Z0-9_-]+)\s*[:=]\s*(.+)$/);
+            if (m) {
+              const key = m[1].toLowerCase();
+              const value = m[2].trim();
+              if (key === 'color' || key === 'background' || key === 'bg') {
+                document.body.style.background = value;
+              } else if (key === 'class') {
+                document.body.classList.add(value);
+              } else {
+                document.documentElement.style.setProperty(`--bg-${key}`, value);
+              }
+            } else {
+              document.body.style.background = p;
+            }
+          }
+          currentBgInstances.push({ name: 'color', instance: { destroy: async () => { document.body.style.background = ''; } }, wrapper: null });
         }
         continue;
       }
 
-      // --- other components fallback (existing) ---
+      // other components: inject raw inner HTML into #app
       if (comp.inner) {
         const container = document.createElement('div');
         container.className = `lumo-comp-${comp.name}`;
@@ -491,42 +547,50 @@
       }
     }
 
-
-    // ensure link interception
+    // ensure link interception (use baseUrl so relative hrefs resolve correctly)
     attachZtmfLinkHandler(baseUrl, meta);
   }
 
+  // ---- click handler: intercept .ztmf links and load via SPA ----
   function attachZtmfLinkHandler(baseUrl, meta = {}) {
-    document.removeEventListener('click', ztmfClickHandler);
-    document.addEventListener('click', ztmfClickHandler);
+    // remove old handler if present
+    if (globalZtmfClickHandler) {
+      try { document.removeEventListener('click', globalZtmfClickHandler); } catch (e) {}
+      globalZtmfClickHandler = null;
+    }
 
     function isLocalZtmf(href) {
-      return href && href.split('?')[0].split('#')[0].toLowerCase().endsWith('.ztmf');
+      if (!href) return false;
+      const hr = href.split('?')[0].split('#')[0].toLowerCase();
+      return hr.endsWith('.ztmf');
     }
     function resolve(href) { return absoluteURL(baseUrl, href); }
-    function ztmfClickHandler(e) {
+
+    const handler = function ztmfClickHandler(e) {
       const a = e.target.closest && e.target.closest('a');
       if (!a) return;
       const href = a.getAttribute('href');
       if (!href) return;
+
+      // ignore anchors and mailto/tel and javascript:
+      if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
+
       if (isLocalZtmf(href)) {
         e.preventDefault();
         const url = resolve(href);
+        // load as SPA, and push history as index.html?file=FILENAME (safe for reload)
         loadZtmf(url, true).catch(err => { console.error(err); status('Ошибка загрузки ' + href); });
-      } else {
-        // external link: if meta.type === 'main' we allow, else default browser
+        return;
       }
-    }
+
+      // allow normal navigation for HTML pages and external links
+    };
+
+    globalZtmfClickHandler = handler;
+    document.addEventListener('click', globalZtmfClickHandler);
   }
 
-  function baseFromUrl(url) {
-    try {
-      const u = new URL(url, location.href);
-      u.pathname = u.pathname.replace(/\/[^/]*$/, '/');
-      return u.toString();
-    } catch (e) { return './'; }
-  }
-
+  // ---- load ZTMF (core) ----
   async function loadZtmf(url, pushState = true) {
     status('Загружаю ' + url);
     const resp = await fetch(url, { cache: 'no-store' });
@@ -535,13 +599,33 @@
     const { metaRaw, bodyRaw } = splitZtmf(text);
     const meta = parseMetaKVs(metaRaw);
     const inlineStyle = extractInlineStyle(metaRaw);
-    const { html, componentsSpec } = processBody(bodyRaw);
+
+    // choose parser based on meta.type
+    let html, componentsSpec;
+    if (String(meta.type || '').toLowerCase() === 'blocky') {
+      ({ html, componentsSpec } = parseBlocky(bodyRaw));
+    } else {
+      ({ html, componentsSpec } = processBody(bodyRaw));
+    }
+
     const baseUrl = baseFromUrl(url);
     await renderParsed({ meta, inlineStyle, html, componentsSpec }, baseUrl);
     status('Загружено: ' + (meta.title || url));
-    // if (pushState) { try { history.pushState({ lumo: url }, meta.title || '', url); } catch (e) {} }
+
+    if (pushState) {
+      try {
+        // push a safe URL so reload doesn't fetch raw .ztmf
+        const fname = (() => {
+          try { return (new URL(url, location.href)).pathname.split('/').pop(); } catch (e) { return url; }
+        })();
+        const basePath = location.pathname.replace(/\/[^/]*$/, '/');
+        const safeUrl = `${basePath}index.html?file=${encodeURIComponent(fname)}`;
+        history.pushState({ lumo: url }, meta.title || '', safeUrl);
+      } catch (e) { /* ignore pushState errors */ }
+    }
   }
 
+  // ---- disable context menu helper ----
   function installDisableContextMenu() {
     if (window.__lumo_rmb_disabled) return;
     function disableContext(e) { e.preventDefault(); return false; }
@@ -551,22 +635,59 @@
     window.__lumo_rmb_disabled = true;
   }
 
+  // ---- popstate handling ----
   window.addEventListener('popstate', (ev) => {
     const state = ev.state;
     if (state && state.lumo) loadZtmf(state.lumo, false).catch(e => console.error(e));
-    else if (window.LUMO_START) loadZtmf(window.LUMO_START, false).catch(()=>{});
+    else {
+      // fallback: if query param file exists, load it
+      const params = new URLSearchParams(window.location.search);
+      const file = params.get('file');
+      if (file) {
+        const url = absoluteURL(location.href, file);
+        loadZtmf(url, false).catch(()=>{});
+      } else if (window.LUMO_START) {
+        loadZtmf(window.LUMO_START, false).catch(()=>{});
+      }
+    }
   });
 
+  // ---- initial load logic ----
   window.addEventListener('load', () => {
-    const start = window.LUMO_START || './index.ztmf';
-    const loc = location.href;
-    if (loc.toLowerCase().endsWith('.ztmf')) {
-      loadZtmf(loc, false).catch(err => { console.warn('initial load failed', err); loadZtmf(start, false).catch(()=>{}); });
-    } else {
+    try {
+      const urlObj = new URL(location.href);
+      const pathname = urlObj.pathname || '';
+      // If user opened a .ztmf directly (e.g. http://host/anycraft.ztmf) redirect to index.html?file=...
+      if (pathname.toLowerCase().endsWith('.ztmf')) {
+        const file = pathname.split('/').pop();
+        // build redirect to same directory index.html with file param
+        const base = pathname.replace(/\/[^/]*$/, '/');
+        const redirect = `${base}index.html?file=${encodeURIComponent(file)}`;
+        // replace directly so browser doesn't add entry
+        window.location.replace(redirect);
+        return;
+      }
+
+      // If we are on index.html or root, check for ?file= param
+      const params = new URLSearchParams(window.location.search);
+      const fileParam = params.get('file');
+      if (fileParam) {
+        const targetUrl = absoluteURL(location.href, fileParam);
+        loadZtmf(targetUrl, false).catch(err => console.error('initial file load failed', err));
+        return;
+      }
+
+      // normal startup: load LUMO_START or default index.ztmf
+      const start = window.LUMO_START || './index.ztmf';
+      loadZtmf(start, false).catch(err => console.error('startup load failed', err));
+    } catch (e) {
+      // fail-safe fallback
+      const start = window.LUMO_START || './index.ztmf';
       loadZtmf(start, false).catch(err => console.error('startup load failed', err));
     }
   });
 
+  // ---- public API ----
   window.Lumo = {
     load: loadZtmf,
     destroyBackgrounds: destroyAllBackgroundInstances,
@@ -574,4 +695,3 @@
   };
 
 })();
-
