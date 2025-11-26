@@ -285,7 +285,7 @@
 
       // SVG для солнца (светлая тема)
       const sunSVG = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-sun">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-sun">
           <circle cx="12" cy="12" r="5"></circle>
           <line x1="12" y1="1" x2="12" y2="3"></line>
           <line x1="12" y1="21" x2="12" y2="23"></line>
@@ -446,6 +446,7 @@
         btn.className = 'lumo-back-button';
         btn.setAttribute('aria-label', 'Back');
         btn.textContent = '⟵';
+        btn.style.color = 'var(--text-color)';
         btn.title = 'Назад';
 
         const posClass = `lumo-theme-pos-${pos.replace(/\s+/g, '-').toLowerCase()}`;
