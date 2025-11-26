@@ -445,7 +445,7 @@
         const btn = document.createElement('button');
         btn.className = 'lumo-back-button';
         btn.setAttribute('aria-label', 'Back');
-        btn.textContent = '⟵';
+        btn.textContent = '❮';
         btn.style.color = 'var(--text-color)';
         btn.title = 'Назад';
 
