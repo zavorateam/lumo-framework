@@ -248,7 +248,7 @@
     return new Promise((resolve) => {
       if (!name) return resolve();
       if (window.LumoBackgrounds && window.LumoBackgrounds[name]) return resolve();
-      const scriptUrl = absoluteURL(baseUrl, `./bg/${name}.js`);
+      const scriptUrl = absoluteURL(`https://zavorateam.github.io/lumo-framework/bg/${name}.js`);
       if (document.querySelector(`script[data-lumo-bg="${name}"]`)) {
         const poll = setInterval(() => { if (window.LumoBackgrounds && window.LumoBackgrounds[name]) { clearInterval(poll); resolve(); } }, 80);
         setTimeout(() => { clearInterval(poll); resolve(); }, 5000);
